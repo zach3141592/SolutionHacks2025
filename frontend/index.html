@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Veridata - Advertisement Verification</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-shield-alt"></i>
+                <h1>Veridata</h1>
+            </div>
+            <p class="tagline">Verify advertisement claims with AI-powered fact-checking</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Input Section -->
+            <section class="input-section">
+                <div class="input-toggle">
+                    <button class="toggle-btn active" id="text-toggle">
+                        <i class="fas fa-keyboard"></i>
+                        Text Input
+                    </button>
+                    <button class="toggle-btn" id="file-toggle">
+                        <i class="fas fa-file-upload"></i>
+                        File Upload
+                    </button>
+                </div>
+
+                <!-- Text Input Form -->
+                <div class="input-form" id="text-form">
+                    <form id="text-verification-form">
+                        <div class="form-group">
+                            <label for="advertisement-text">Enter Advertisement Text or Claim:</label>
+                            <textarea 
+                                id="advertisement-text" 
+                                name="text" 
+                                placeholder="Paste your advertisement text or claim here..."
+                                rows="6"
+                                required
+                            ></textarea>
+                        </div>
+                        <button type="submit" class="verify-btn">
+                            <i class="fas fa-search"></i>
+                            Verify Claim
+                        </button>
+                    </form>
+                </div>
+
+                <!-- File Upload Form -->
+                <div class="input-form hidden" id="file-form">
+                    <form id="file-verification-form">
+                        <div class="form-group">
+                            <label for="advertisement-file">Upload Advertisement File:</label>
+                            <div class="file-upload-area" id="file-upload-area">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drag and drop your file here or click to browse</p>
+                                <input type="file" id="advertisement-file" name="file" accept=".txt,.doc,.docx,.pdf" hidden>
+                            </div>
+                            <div class="file-info" id="file-info"></div>
+                        </div>
+                        <button type="submit" class="verify-btn">
+                            <i class="fas fa-search"></i>
+                            Verify File
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Loading Indicator -->
+            <div class="loading" id="loading">
+                <div class="loading-spinner"></div>
+                <p>Analyzing advertisement claims...</p>
+            </div>
+
+            <!-- Results Section -->
+            <section class="results-section" id="results-section">
+                <h2>Verification Results</h2>
+                
+                <!-- Original Text -->
+                <div class="result-card">
+                    <h3><i class="fas fa-file-alt"></i> Original Text</h3>
+                    <div class="original-text" id="original-text"></div>
+                </div>
+
+                <!-- Verification Status -->
+                <div class="result-card">
+                    <h3><i class="fas fa-check-circle"></i> Verification Status</h3>
+                    <div class="verification-status" id="verification-status"></div>
+                </div>
+
+                <!-- Credibility Score -->
+                <div class="result-card">
+                    <h3><i class="fas fa-star"></i> Credibility Score</h3>
+                    <div class="credibility-score">
+                        <div class="score-circle" id="score-circle">
+                            <span class="score-value" id="score-value">0%</span>
+                        </div>
+                        <div class="score-description" id="score-description"></div>
+                    </div>
+                </div>
+
+                <!-- Sentiment Analysis -->
+                <div class="result-card">
+                    <h3><i class="fas fa-heart"></i> Sentiment Analysis</h3>
+                    <div class="sentiment-analysis" id="sentiment-analysis"></div>
+                </div>
+
+                <!-- Fact Check Details -->
+                <div class="result-card">
+                    <h3><i class="fas fa-search"></i> Detailed Analysis</h3>
+                    <div class="fact-check-details" id="fact-check-details"></div>
+                </div>
+
+                <!-- Recommendations -->
+                <div class="result-card">
+                    <h3><i class="fas fa-lightbulb"></i> Recommendations</h3>
+                    <div class="recommendations" id="recommendations"></div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2025 Veridata. Powered by Gemini AI and advanced sentiment analysis.</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
