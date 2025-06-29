@@ -9,6 +9,18 @@ import os
 from typing import Optional
 import json
 from dotenv import load_dotenv
+import io
+import tempfile
+from pathlib import Path
+
+# Computer Vision and OCR imports
+from PIL import Image, ImageEnhance, ImageFilter
+import pytesseract
+import cv2
+import numpy as np
+from pdf2image import convert_from_bytes, convert_from_path
+import PyPDF2
+import base64
 
 # Load environment variables from .env file
 load_dotenv()
@@ -48,138 +60,389 @@ class VerificationResult(BaseModel):
     recommendations: list
 
 async def extract_text_from_file(file: UploadFile) -> str:
-    """Extract text content from uploaded file"""
+    """Advanced text extraction from various file types using computer vision and OCR"""
     try:
-        # Read file content directly
+        # Read file content
         content = await file.read()
-        
-        # Check if file appears to be text-based by filename extension
         filename = file.filename or ""
-        text_extensions = {'.txt', '.md', '.csv', '.json', '.xml', '.html', '.css', '.js', '.py', '.log'}
-        is_likely_text = any(filename.lower().endswith(ext) for ext in text_extensions)
+        file_extension = Path(filename).suffix.lower()
         
-        # Try to decode as text with multiple encoding attempts
-        text = None
-        encodings_to_try = ['utf-8', 'utf-16', 'latin-1', 'cp1252']
+        print(f"Processing file: {filename} ({file_extension})")
         
-        for encoding in encodings_to_try:
+        # Determine file type and processing method
+        if file_extension in {'.txt', '.md', '.csv', '.json', '.xml', '.html', '.css', '.js', '.py', '.log'}:
+            return await process_text_file(content)
+        elif file_extension in {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp', '.gif'}:
+            return await process_image_file(content, filename)
+        elif file_extension == '.pdf':
+            return await process_pdf_file(content, filename)
+        else:
+            # Try as text first, then as image
             try:
-                text = content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        
-        # If all encoding attempts failed, use utf-8 with error handling
-        if text is None:
-            text = content.decode('utf-8', errors='replace')
-        
-        # Basic validation - check if content looks like readable text
-        if not text.strip():
-            raise ValueError("No readable text content found in file")
-            
-        # Remove excessive control characters but keep basic formatting
-        text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
-        
-        if len(text.strip()) < 10:
-            raise ValueError("File content too short or not readable as text")
-            
-        return text
+                return await process_text_file(content)
+            except:
+                try:
+                    return await process_image_file(content, filename)
+                except:
+                    raise ValueError(f"Unsupported file type: {file_extension}")
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
 
-async def verify_with_gemini(text: str) -> dict:
-    """Use Gemini API to verify advertisement claims with fallback"""
+async def process_text_file(content: bytes) -> str:
+    """Process text-based files with encoding detection"""
+    encodings_to_try = ['utf-8', 'utf-16', 'latin-1', 'cp1252', 'ascii']
+    
+    for encoding in encodings_to_try:
+        try:
+            text = content.decode(encoding)
+            if text.strip():
+                # Clean text by removing excessive control characters
+                text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+                
+                if len(text.strip()) >= 10:
+                    return text
+        except UnicodeDecodeError:
+            continue
+    
+    # Final attempt with error handling
+    text = content.decode('utf-8', errors='replace')
+    if len(text.strip()) < 10:
+        raise ValueError("File content too short or not readable as text")
+    return text
+
+async def process_image_file(content: bytes, filename: str) -> str:
+    """Process image files using advanced OCR techniques"""
     try:
+        # Load image from bytes
+        image = Image.open(io.BytesIO(content))
+        
+        # Convert to RGB if necessary
+        if image.mode not in ('RGB', 'L'):
+            image = image.convert('RGB')
+        
+        print(f"Image loaded: {image.size}, mode: {image.mode}")
+        
+        # Apply image preprocessing for better OCR
+        processed_image = preprocess_image_for_ocr(image)
+        
+        # Perform OCR with multiple configurations
+        extracted_text = perform_advanced_ocr(processed_image)
+        
+        if not extracted_text or len(extracted_text.strip()) < 5:
+            # Try with original image if preprocessing didn't help
+            extracted_text = perform_advanced_ocr(image)
+        
+        if not extracted_text or len(extracted_text.strip()) < 3:
+            raise ValueError("No readable text found in image")
+        
+        print(f"Extracted text length: {len(extracted_text)}")
+        print(f"Extracted text content: '{extracted_text.strip()}'")
+        return extracted_text.strip()
+        
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from image: {str(e)}")
+
+def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
+    """Apply image preprocessing techniques to improve OCR accuracy"""
+    try:
+        # Convert to numpy array for OpenCV processing
+        img_array = np.array(image)
+        
+        # Convert RGB to BGR for OpenCV
+        if len(img_array.shape) == 3:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
+        
+        # Apply denoising
+        denoised = cv2.fastNlMeansDenoising(gray)
+        
+        # Apply adaptive thresholding
+        thresh = cv2.adaptiveThreshold(
+            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # Apply morphological operations to clean up
+        kernel = np.ones((2, 2), np.uint8)
+        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        
+        # Convert back to PIL Image
+        processed_image = Image.fromarray(cleaned)
+        
+        # Additional PIL-based enhancements
+        # Enhance contrast
+        enhancer = ImageEnhance.Contrast(processed_image)
+        processed_image = enhancer.enhance(2.0)
+        
+        # Enhance sharpness
+        enhancer = ImageEnhance.Sharpness(processed_image)
+        processed_image = enhancer.enhance(2.0)
+        
+        return processed_image
+        
+    except Exception as e:
+        print(f"Preprocessing failed, using original image: {e}")
+        return image
+
+def perform_advanced_ocr(image: Image.Image) -> str:
+    """Perform OCR with multiple configurations for best results"""
+    
+    # OCR configurations to try
+    ocr_configs = [
+        '--oem 3 --psm 6',  # Default: Assume uniform block of text
+        '--oem 3 --psm 4',  # Assume single column of text
+        '--oem 3 --psm 3',  # Fully automatic page segmentation
+        '--oem 3 --psm 1',  # Automatic page segmentation with OSD
+        '--oem 3 --psm 11', # Sparse text
+        '--oem 3 --psm 12', # Sparse text with OSD
+        '--oem 3 --psm 8',  # Single word
+        '--oem 3 --psm 7',  # Single text line
+    ]
+    
+    best_text = ""
+    best_confidence = 0
+    
+    for config in ocr_configs:
+        try:
+            # Get text with confidence data
+            data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
+            
+            # Calculate average confidence
+            confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            
+            # Extract text
+            text = pytesseract.image_to_string(image, config=config).strip()
+            
+            # Keep the result with highest confidence and reasonable length
+            if avg_confidence > best_confidence and len(text) > 10:
+                best_text = text
+                best_confidence = avg_confidence
+                
+        except Exception as e:
+            print(f"OCR config {config} failed: {e}")
+            continue
+    
+    # If no good result, try basic OCR
+    if not best_text:
+        try:
+            best_text = pytesseract.image_to_string(image).strip()
+        except Exception as e:
+            print(f"Basic OCR failed: {e}")
+    
+    return best_text
+
+async def process_pdf_file(content: bytes, filename: str) -> str:
+    """Process PDF files with text extraction and OCR fallback"""
+    try:
+        # First try direct text extraction
+        text = extract_text_from_pdf(content)
+        
+        if text and len(text.strip()) >= 50:
+            print("PDF text extracted directly")
+            return text
+        
+        # If direct extraction fails or yields little text, use OCR
+        print("PDF direct extraction failed, trying OCR...")
+        text = extract_text_from_pdf_with_ocr(content)
+        
+        if not text or len(text.strip()) < 10:
+            raise ValueError("No readable text found in PDF")
+        
+        return text
+        
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
+
+def extract_text_from_pdf(content: bytes) -> str:
+    """Extract text directly from PDF using PyPDF2"""
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+        text = ""
+        
+        for page in pdf_reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        
+        return text.strip()
+        
+    except Exception as e:
+        print(f"Direct PDF extraction failed: {e}")
+        return ""
+
+def extract_text_from_pdf_with_ocr(content: bytes) -> str:
+    """Extract text from PDF using OCR (for scanned PDFs)"""
+    try:
+        # Convert PDF pages to images
+        images = convert_from_bytes(content, dpi=300, fmt='PNG')
+        
+        extracted_text = ""
+        
+        for i, image in enumerate(images):
+            print(f"Processing PDF page {i+1}/{len(images)}")
+            
+            # Preprocess image for better OCR
+            processed_image = preprocess_image_for_ocr(image)
+            
+            # Perform OCR
+            page_text = perform_advanced_ocr(processed_image)
+            
+            if page_text:
+                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+        
+        return extracted_text.strip()
+        
+    except Exception as e:
+        print(f"PDF OCR extraction failed: {e}")
+        raise e
+
+async def verify_with_gemini(text: str) -> dict:
+    """Use Gemini API to verify advertisement claims and get accuracy score"""
+    try:
+        print(f"Analyzing text with Gemini: '{text}' (length: {len(text)})")
+        
+        # Handle very short text
+        if len(text.strip()) < 5:
+            return {
+                "accuracy_score": 50,
+                "reasoning": "Text too short for meaningful analysis",
+                "main_issues": ["Insufficient text content"],
+                "verification_status": "insufficient_data"
+            }
+        
         prompt = f"""
-        You are an expert fact-checker and advertisement analyst. Please analyze the following advertisement text or claim:
+        You are an expert fact-checker analyzing advertisement claims. Analyze this text:
 
         "{text}"
 
-        Provide a comprehensive analysis including:
-        1. Fact-checking: Verify if the claims made are factually accurate
-        2. Credibility assessment: Rate the credibility from 0-100
-        3. Potential misleading elements: Identify any potentially misleading statements
-        4. Supporting evidence: What evidence would be needed to support these claims
-        5. Recommendations: Suggest improvements for transparency and accuracy
+        Rate the ACCURACY and TRUTHFULNESS of these claims on a scale of 0-100, where:
+        - 90-100: Highly accurate, well-supported factual claims
+        - 70-89: Mostly accurate with minor issues or exaggerations
+        - 50-69: Partially accurate but with significant concerns
+        - 30-49: Mostly inaccurate or misleading
+        - 0-29: Completely false, impossible, or fraudulent claims
 
-        Respond in JSON format with the following structure:
+        Consider:
+        - Scientific accuracy and plausibility
+        - Whether claims can be substantiated
+        - Presence of impossible or fantasy elements
+        - Misleading or exaggerated language
+        - Overall truthfulness
+
+        Respond in JSON format:
         {{
-            "verification_status": "verified/partially_verified/unverified/misleading",
-            "credibility_score": 0-100,
-            "fact_check_summary": "detailed analysis",
-            "misleading_elements": ["list of potentially misleading elements"],
-            "evidence_needed": ["list of evidence needed"],
-            "recommendations": ["list of recommendations"]
+            "accuracy_score": [0-100 number],
+            "reasoning": "brief explanation of the score",
+            "main_issues": ["list of key problems if any"],
+            "verification_status": "accurate/concerning/misleading/false"
         }}
         """
 
         response = model.generate_content(prompt)
         
-        # Try to parse JSON response
+        # Try to parse JSON response (handle markdown formatting)
         try:
-            result = json.loads(response.text.strip())
+            response_text = response.text.strip()
+            print(f"Raw Gemini response: '{response_text}'")
+            
+            # Remove markdown code block formatting if present
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]  # Remove ```json
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]  # Remove closing ```
+            
+            print(f"Cleaned response for JSON parsing: '{response_text.strip()}'")
+            result = json.loads(response_text.strip())
+            print(f"Parsed JSON result: {result}")
+            
+            # Ensure we have the expected fields
+            if "accuracy_score" not in result:
+                result["accuracy_score"] = 50
+            return result
         except json.JSONDecodeError:
             # If JSON parsing fails, create structured response from text
-            result = {
-                "verification_status": "analysis_completed",
-                "credibility_score": 50,
-                "fact_check_summary": response.text,
-                "misleading_elements": [],
-                "evidence_needed": [],
-                "recommendations": []
+            return {
+                "accuracy_score": 50,
+                "reasoning": response.text[:200] + "..." if len(response.text) > 200 else response.text,
+                "main_issues": [],
+                "verification_status": "analysis_completed"
             }
         
-        return result
     except Exception as e:
         # Handle API quota exceeded and other errors gracefully
         print(f"Gemini API Error: {str(e)}")
         
         # Check if it's a quota exceeded error
         if "quota" in str(e).lower() or "429" in str(e):
-            fallback_summary = "AI analysis temporarily unavailable due to API limits. Analysis based on local scoring algorithms only."
+            reasoning = "AI analysis temporarily unavailable due to API limits."
         else:
-            fallback_summary = f"AI analysis unavailable: {str(e)[:100]}..."
+            reasoning = f"AI analysis unavailable: {str(e)[:100]}..."
         
         # Return fallback result - don't raise HTTPException
         return {
-            "verification_status": "analysis_completed",
-            "credibility_score": 60,  # Neutral fallback score
-            "fact_check_summary": fallback_summary,
-            "misleading_elements": [],
-            "evidence_needed": ["External fact-checking recommended"],
-            "recommendations": ["Verify claims through independent sources"]
+            "accuracy_score": 50,  # Neutral fallback score
+            "reasoning": reasoning,
+            "main_issues": ["AI analysis unavailable"],
+            "verification_status": "analysis_unavailable"
         }
 
 def analyze_sentiment(text: str) -> dict:
-    """Perform sentiment analysis on the text"""
+    """Perform advanced sentiment analysis tailored for advertisement verification"""
     try:
         blob = TextBlob(text)
+        text_lower = text.lower()
+        words = text_lower.split()
         
-        # Get polarity (-1 to 1) and subjectivity (0 to 1)
+        # Basic TextBlob analysis
         polarity = blob.sentiment.polarity
         subjectivity = blob.sentiment.subjectivity
         
-        # Determine sentiment category
-        if polarity > 0.1:
-            sentiment_category = "positive"
-        elif polarity < -0.1:
-            sentiment_category = "negative"  
-        else:
-            sentiment_category = "neutral"
-            
-        # Determine objectivity
-        if subjectivity < 0.5:
-            objectivity = "objective"
-        else:
-            objectivity = "subjective"
-            
+        # Advanced emotional analysis
+        emotional_analysis = analyze_emotional_patterns(text_lower, words)
+        
+        # Advertisement manipulation detection
+        manipulation_analysis = detect_manipulation_tactics(text_lower)
+        
+        # Language pressure analysis
+        pressure_analysis = analyze_pressure_language(text_lower)
+        
+        # Determine enhanced sentiment category
+        sentiment_category = determine_sentiment_category(polarity, emotional_analysis)
+        
+        # Determine objectivity with more nuance
+        objectivity_analysis = analyze_objectivity(subjectivity, text_lower, words)
+        
+        # Calculate overall sentiment trustworthiness
+        trustworthiness = calculate_sentiment_trustworthiness(
+            polarity, subjectivity, manipulation_analysis, pressure_analysis
+        )
+        
+        # Determine confidence level
+        confidence = calculate_sentiment_confidence(polarity, subjectivity, len(words))
+        
         return {
             "polarity": round(polarity, 3),
             "subjectivity": round(subjectivity, 3),
             "sentiment_category": sentiment_category,
-            "objectivity": objectivity,
-            "confidence": round(abs(polarity), 3)
+            "objectivity": objectivity_analysis["category"],
+            "confidence": round(confidence, 3),
+            "trustworthiness_score": round(trustworthiness, 1),
+            "emotional_intensity": emotional_analysis["intensity"],
+            "emotional_indicators": emotional_analysis["indicators"],
+            "manipulation_detected": manipulation_analysis["detected"],
+            "manipulation_tactics": manipulation_analysis["tactics"],
+            "pressure_level": pressure_analysis["level"],
+            "pressure_indicators": pressure_analysis["indicators"],
+            "objectivity_details": objectivity_analysis,
+            "language_analysis": {
+                "word_count": len(words),
+                "exclamation_count": text.count("!"),
+                "question_count": text.count("?"),
+                "caps_ratio": sum(1 for c in text if c.isupper()) / len(text) if text else 0
+            }
         }
     except Exception as e:
         return {
@@ -188,234 +451,341 @@ def analyze_sentiment(text: str) -> dict:
             "sentiment_category": "neutral",
             "objectivity": "unknown",
             "confidence": 0,
+            "trustworthiness_score": 50,
+            "emotional_intensity": "low",
             "error": str(e)
         }
 
-def calculate_advanced_credibility_score(text: str, gemini_result: dict, sentiment_data: dict) -> dict:
-    """Calculate a comprehensive credibility score based on multiple factors"""
+def analyze_emotional_patterns(text_lower: str, words: list) -> dict:
+    """Analyze emotional patterns and intensity in the text"""
     
-    # Determine statement type for context-aware scoring
-    text_lower = text.lower()
-    words = text_lower.split()
-    word_count = len(words)
+    # Emotional intensity indicators
+    high_intensity_words = [
+        "amazing", "incredible", "unbelievable", "fantastic", "extraordinary", "phenomenal",
+        "revolutionary", "breakthrough", "miracle", "ultimate", "perfect", "guaranteed",
+        "instant", "immediate", "dramatic", "shocking", "stunning", "overwhelming"
+    ]
     
-    # Detect statement type
-    is_health_fact = any(term in text_lower for term in [
-        "health", "nutrition", "diet", "exercise", "sleep", "water", "food", "vitamin",
-        "mineral", "protein", "fiber", "calcium", "antioxidant", "vegetable", "fruit"
-    ])
+    moderate_intensity_words = [
+        "great", "excellent", "wonderful", "awesome", "impressive", "remarkable",
+        "effective", "powerful", "strong", "significant", "important", "valuable"
+    ]
     
-    is_basic_fact = any(term in text_lower for term in [
-        "is good", "is healthy", "is important", "is essential", "helps", "benefits",
-        "prevents", "reduces", "supports", "aids", "provides"
-    ]) and word_count <= 15
+    emotional_words = [
+        "love", "hate", "fear", "excited", "thrilled", "devastated", "overjoyed",
+        "furious", "delighted", "horrified", "ecstatic", "terrified", "passionate"
+    ]
     
-    is_scientific = any(term in text_lower for term in [
-        "research", "study", "clinical", "peer-reviewed", "evidence", "data", "according to"
-    ])
+    # Count emotional indicators
+    high_count = sum(1 for word in high_intensity_words if word in text_lower)
+    moderate_count = sum(1 for word in moderate_intensity_words if word in text_lower)
+    emotional_count = sum(1 for word in emotional_words if word in text_lower)
     
-    # Initialize score components with context-aware base
-    if is_basic_fact and is_health_fact:
-        base_score = 75  # Higher for basic health facts
-    elif is_scientific:
-        base_score = 70  # Higher for scientific statements
-    elif is_basic_fact:
-        base_score = 68  # Higher for basic factual statements
+    # Calculate intensity
+    total_words = len(words)
+    if total_words == 0:
+        intensity_ratio = 0
     else:
-        base_score = 60  # Standard for other statements
+        intensity_ratio = (high_count * 3 + moderate_count * 2 + emotional_count) / total_words
     
-    scores = {
-        "base_score": base_score,
-        "language_analysis": 0,
-        "sentiment_factor": 0,
-        "red_flag_penalties": 0,
-        "gemini_adjustment": 0,
-        "factual_indicators": 0,
-        "common_knowledge_bonus": 0,
-        "statement_type_bonus": 0
+    # Determine intensity level
+    if intensity_ratio > 0.15:
+        intensity = "very_high"
+    elif intensity_ratio > 0.08:
+        intensity = "high"
+    elif intensity_ratio > 0.04:
+        intensity = "moderate"
+    elif intensity_ratio > 0.01:
+        intensity = "low"
+    else:
+        intensity = "minimal"
+    
+    # Identify specific emotional indicators
+    indicators = []
+    if high_count > 0:
+        indicators.append(f"High-intensity words: {high_count}")
+    if moderate_count > 0:
+        indicators.append(f"Moderate-intensity words: {moderate_count}")
+    if emotional_count > 0:
+        indicators.append(f"Emotional words: {emotional_count}")
+    
+    return {
+        "intensity": intensity,
+        "intensity_ratio": round(intensity_ratio, 4),
+        "indicators": indicators,
+        "high_intensity_count": high_count,
+        "moderate_intensity_count": moderate_count,
+        "emotional_count": emotional_count
+    }
+
+def detect_manipulation_tactics(text_lower: str) -> dict:
+    """Detect common manipulation tactics in advertising"""
+    
+    manipulation_patterns = {
+        "scarcity": [
+            "limited time", "while supplies last", "only today", "act now", "hurry",
+            "don't miss out", "last chance", "limited offer", "expires soon", "few left"
+        ],
+        "social_proof": [
+            "everyone is buying", "most popular", "bestseller", "thousands sold",
+            "customer favorite", "highly rated", "top choice", "preferred by"
+        ],
+        "authority": [
+            "doctors recommend", "experts say", "scientists prove", "studies show",
+            "endorsed by", "approved by", "recommended by", "trusted by"
+        ],
+        "fear_mongering": [
+            "don't let", "avoid disaster", "protect yourself", "before it's too late",
+            "dangerous", "risky", "harmful", "devastating consequences"
+        ],
+        "false_urgency": [
+            "act now", "don't wait", "immediate action", "urgent", "time sensitive",
+            "deadline approaching", "offer ends", "final hours"
+        ],
+        "exaggeration": [
+            "completely", "totally", "absolutely", "100%", "never", "always",
+            "everyone", "nobody", "all", "none", "perfect", "flawless"
+        ]
     }
     
-    # 1. Expanded common knowledge and factual statements
-    common_facts = [
-        # Core health facts (high confidence)
-        ("vegetables are good", +20), ("vegetables are healthy", +20), ("fruits are healthy", +20),
-        ("exercise is beneficial", +20), ("exercise is good", +20), ("exercise helps", +18),
-        ("water is essential", +20), ("water is important", +18), ("drinking water", +15),
-        ("sleep is important", +20), ("sleep is essential", +18), ("get enough sleep", +15),
-        ("smoking is harmful", +20), ("smoking is bad", +18), ("don't smoke", +15),
-        
-        # Nutrition facts
-        ("balanced diet", +18), ("healthy diet", +18), ("nutritious food", +15),
-        ("eat vegetables", +15), ("eat fruits", +15), ("whole grains", +12),
-        ("limit sugar", +15), ("reduce salt", +12), ("avoid processed", +12),
-        
-        # Basic science and health
-        ("calcium is good for bones", +20), ("calcium strengthens bones", +18),
-        ("fiber aids digestion", +20), ("fiber is good", +15), ("fiber helps", +15),
-        ("protein builds muscle", +18), ("protein is important", +15),
-        ("sun provides vitamin d", +20), ("vitamin d from sun", +18),
-        ("vitamins are important", +15), ("minerals are essential", +15),
-        ("antioxidants are beneficial", +15), ("omega-3", +12),
-        
-        # Exercise and fitness
-        ("regular exercise", +18), ("physical activity", +15), ("cardio is good", +15),
-        ("strength training", +12), ("stretching is important", +12),
-        ("exercise reduces risk", +18), ("exercise prevents", +15),
-        
-        # General wellness
-        ("maintain health", +15), ("prevent disease", +15), ("boost immunity", +12),
-        ("support health", +12), ("promote wellness", +10), ("stay healthy", +12),
-        ("healthy lifestyle", +15), ("wellness is important", +12)
+    detected_tactics = []
+    tactic_details = {}
+    
+    for tactic, phrases in manipulation_patterns.items():
+        matches = [phrase for phrase in phrases if phrase in text_lower]
+        if matches:
+            detected_tactics.append(tactic)
+            tactic_details[tactic] = matches
+    
+    manipulation_score = len(detected_tactics) / len(manipulation_patterns) * 100
+    
+    return {
+        "detected": len(detected_tactics) > 0,
+        "tactics": detected_tactics,
+        "details": tactic_details,
+        "manipulation_score": round(manipulation_score, 1),
+        "severity": "high" if len(detected_tactics) >= 3 else "moderate" if len(detected_tactics) >= 2 else "low" if len(detected_tactics) >= 1 else "none"
+    }
+
+def analyze_pressure_language(text_lower: str) -> dict:
+    """Analyze language that creates psychological pressure"""
+    
+    pressure_indicators = {
+        "high_pressure": [
+            "act now or", "don't miss", "last chance", "final warning", "urgent",
+            "immediate action required", "time running out", "deadline"
+        ],
+        "moderate_pressure": [
+            "limited time", "special offer", "today only", "while supplies last",
+            "don't wait", "hurry", "fast action"
+        ],
+        "low_pressure": [
+            "consider", "think about", "when you're ready", "at your convenience",
+            "take your time", "no rush", "whenever"
+        ]
+    }
+    
+    high_pressure_count = sum(1 for phrase in pressure_indicators["high_pressure"] if phrase in text_lower)
+    moderate_pressure_count = sum(1 for phrase in pressure_indicators["moderate_pressure"] if phrase in text_lower)
+    low_pressure_count = sum(1 for phrase in pressure_indicators["low_pressure"] if phrase in text_lower)
+    
+    # Determine pressure level
+    if high_pressure_count >= 2:
+        level = "very_high"
+    elif high_pressure_count >= 1 or moderate_pressure_count >= 3:
+        level = "high"
+    elif moderate_pressure_count >= 1:
+        level = "moderate"
+    elif low_pressure_count >= 1:
+        level = "low"
+    else:
+        level = "neutral"
+    
+    indicators = []
+    if high_pressure_count > 0:
+        indicators.append(f"High-pressure phrases: {high_pressure_count}")
+    if moderate_pressure_count > 0:
+        indicators.append(f"Moderate-pressure phrases: {moderate_pressure_count}")
+    if low_pressure_count > 0:
+        indicators.append(f"Low-pressure phrases: {low_pressure_count}")
+    
+    return {
+        "level": level,
+        "indicators": indicators,
+        "high_pressure_count": high_pressure_count,
+        "moderate_pressure_count": moderate_pressure_count,
+        "low_pressure_count": low_pressure_count
+    }
+
+def determine_sentiment_category(polarity: float, emotional_analysis: dict) -> str:
+    """Determine sentiment category with enhanced granularity"""
+    
+    intensity = emotional_analysis["intensity"]
+    
+    if polarity > 0.6:
+        return "very_positive" if intensity in ["high", "very_high"] else "positive"
+    elif polarity > 0.2:
+        return "moderately_positive"
+    elif polarity > -0.2:
+        return "neutral"
+    elif polarity > -0.6:
+        return "moderately_negative"
+    else:
+        return "very_negative" if intensity in ["high", "very_high"] else "negative"
+
+def analyze_objectivity(subjectivity: float, text_lower: str, words: list) -> dict:
+    """Analyze objectivity with more nuanced categorization"""
+    
+    # Objective indicators
+    objective_indicators = [
+        "according to", "research shows", "studies indicate", "data suggests",
+        "statistics show", "evidence indicates", "fact", "proven", "measured"
     ]
     
-    for phrase, bonus in common_facts:
-        if phrase in text_lower:
-            scores["common_knowledge_bonus"] += bonus
-    
-    # 2. Red flag detection (penalties) - only for suspicious claims
-    red_flags = [
-        # Extreme claims
-        ("miracle cure", -25), ("instant cure", -20), ("doctors hate", -25), 
-        ("one weird trick", -20), ("cure everything", -25), ("all diseases", -25),
-        ("secret cure", -15), ("revolutionary breakthrough", -12),
-        
-        # Absolute false promises  
-        ("100% effective", -15), ("never fails", -15), ("zero side effects", -12),
-        ("completely safe", -8), ("guaranteed results", -10),
-        
-        # Pressure tactics
-        ("limited time offer", -10), ("act now or", -10), ("today only", -10),
-        ("while supplies last", -8), ("don't wait", -8),
-        
-        # Unrealistic promises
-        ("lose 30 pounds overnight", -20), ("without any effort", -15),
-        ("no diet no exercise", -15), ("instant weight loss", -18),
-        
-        # Conspiracy theories
-        ("doctors don't want you to know", -20), ("big pharma conspiracy", -15),
-        ("they don't want you to see", -18), ("hidden truth", -10),
-        
-        # Fantasy/Impossible claims
-        ("magic", -30), ("magical", -25), ("supernatural", -25), ("mystical", -20),
-        ("teleport", -25), ("time travel", -30), ("fly into the sky", -35), 
-        ("levitate", -25), ("invisibility", -30), ("mind reading", -25),
-        ("psychic powers", -25), ("crystal healing", -15), ("aura reading", -15),
-        ("curse", -20), ("spell", -25), ("potion", -20), ("enchanted", -25),
-        ("fairy tale", -30), ("unicorn", -35), ("dragon", -35), ("wizard", -30),
-        ("take you into the sky", -35), ("fly without wings", -30), ("defy gravity", -25),
-        ("travel through time", -35), ("read minds", -25), ("see the future", -25),
-        ("turn invisible", -30), ("live forever", -30), ("never age", -25),
-        ("breathe underwater without", -20), ("survive in space without", -25)
+    # Subjective indicators
+    subjective_indicators = [
+        "i think", "i believe", "in my opinion", "i feel", "personally",
+        "amazing", "terrible", "wonderful", "awful", "love", "hate"
     ]
     
-    for phrase, penalty in red_flags:
-        if phrase in text_lower:
-            scores["red_flag_penalties"] += penalty
+    objective_count = sum(1 for phrase in objective_indicators if phrase in text_lower)
+    subjective_count = sum(1 for phrase in subjective_indicators if phrase in text_lower)
     
-    # 3. Language analysis - more nuanced
-    # Only penalize excessive promotional language
-    excessive_promo = ["amazing miracle", "incredible breakthrough", "unbelievable results",
-                      "phenomenal discovery", "revolutionary secret", "extraordinary cure"]
-    promo_count = sum(1 for phrase in excessive_promo if phrase in text_lower)
+    # Enhanced objectivity categorization
+    if subjectivity < 0.2:
+        category = "highly_objective"
+    elif subjectivity < 0.4:
+        category = "mostly_objective"
+    elif subjectivity < 0.6:
+        category = "balanced"
+    elif subjectivity < 0.8:
+        category = "mostly_subjective"
+    else:
+        category = "highly_subjective"
     
-    # Single promotional words are less concerning
-    single_promo = ["amazing", "incredible", "fantastic", "outstanding"]
-    single_promo_count = sum(1 for word in single_promo if word in text_lower)
+    return {
+        "category": category,
+        "subjectivity_score": round(subjectivity, 3),
+        "objective_indicators": objective_count,
+        "subjective_indicators": subjective_count,
+        "objectivity_ratio": round(1 - subjectivity, 3)
+    }
+
+def calculate_sentiment_trustworthiness(polarity: float, subjectivity: float, 
+                                      manipulation_analysis: dict, pressure_analysis: dict) -> float:
+    """Calculate overall trustworthiness based on sentiment factors"""
     
-    scores["language_analysis"] = max(-15, -promo_count * 8 - single_promo_count * 2)
+    base_score = 50  # Neutral starting point
     
-    # 4. Enhanced factual indicators
-    scientific_terms = ["study", "research", "clinical trial", "peer-reviewed", 
-                       "scientific evidence", "data shows", "university", "journal",
-                       "fda approved", "clinical evidence", "peer reviewed"]
-    factual_count = sum(1 for term in scientific_terms if term in text_lower)
+    # Polarity adjustment (extreme emotions are suspicious in ads)
+    if abs(polarity) > 0.8:
+        base_score -= 15  # Very extreme sentiment is suspicious
+    elif abs(polarity) > 0.5:
+        base_score -= 5   # Moderate extreme sentiment
+    elif 0.1 <= abs(polarity) <= 0.3:
+        base_score += 10  # Mild sentiment is more trustworthy
     
-    # Basic factual language
-    basic_factual = ["may help", "can support", "studies suggest", "research shows",
-                    "evidence indicates", "according to", "typically", "generally"]
-    basic_count = sum(1 for term in basic_factual if term in text_lower)
+    # Subjectivity adjustment (objective is more trustworthy)
+    objectivity_bonus = (1 - subjectivity) * 20
+    base_score += objectivity_bonus
     
-    scores["factual_indicators"] = min(20, factual_count * 5 + basic_count * 3)
+    # Manipulation penalty
+    manipulation_penalty = manipulation_analysis["manipulation_score"] * 0.3
+    base_score -= manipulation_penalty
     
-    # 5. Improved sentiment analysis
+    # Pressure penalty
+    pressure_penalties = {
+        "very_high": -20,
+        "high": -15,
+        "moderate": -8,
+        "low": 5,
+        "neutral": 0
+    }
+    base_score += pressure_penalties.get(pressure_analysis["level"], 0)
+    
+    return max(0, min(100, base_score))
+
+def calculate_sentiment_confidence(polarity: float, subjectivity: float, word_count: int) -> float:
+    """Calculate confidence in sentiment analysis"""
+    
+    # Base confidence from polarity strength
+    polarity_confidence = abs(polarity)
+    
+    # Text length factor (more text = more confidence)
+    length_factor = min(1.0, word_count / 20)  # Normalize to 20 words
+    
+    # Subjectivity factor (clear subjectivity = more confidence)
+    subjectivity_confidence = abs(subjectivity - 0.5) * 2  # Distance from neutral
+    
+    # Combined confidence
+    confidence = (polarity_confidence * 0.5 + 
+                 length_factor * 0.3 + 
+                 subjectivity_confidence * 0.2)
+    
+    return min(1.0, confidence)
+
+def calculate_credibility_score(gemini_result: dict, sentiment_data: dict) -> dict:
+    """Calculate credibility score: 90% Gemini AI + 10% sentiment analysis"""
+    
+    # Get Gemini accuracy score (0-100)
+    gemini_score = gemini_result.get("accuracy_score", 50)
+    
+    # Use advanced sentiment analysis for credibility scoring
+    sentiment_score = 50  # Default neutral
     if sentiment_data:
-        subjectivity = sentiment_data.get("subjectivity", 0)
-        polarity = sentiment_data.get("polarity", 0)
+        # Use the comprehensive trustworthiness score from advanced sentiment analysis
+        base_trustworthiness = sentiment_data.get("trustworthiness_score", 50)
         
-        # Be more lenient with health facts and basic statements
-        if is_basic_fact or is_health_fact:
-            # For basic facts, subjectivity is less concerning
-            if subjectivity > 0.9 and any(word in text_lower for word in ["buy", "order", "purchase", "sale"]):
-                subjectivity_penalty = -5
-            elif subjectivity > 0.8:
-                subjectivity_penalty = -2
-            else:
-                subjectivity_penalty = 0
-        else:
-            # Standard subjectivity handling for other statements
-            if subjectivity > 0.8 and any(word in text_lower for word in ["buy", "order", "purchase", "sale"]):
-                subjectivity_penalty = -8
-            elif subjectivity > 0.6:
-                subjectivity_penalty = -3
-            else:
-                subjectivity_penalty = 0
+        # Additional factors from advanced analysis
+        manipulation_detected = sentiment_data.get("manipulation_detected", False)
+        pressure_level = sentiment_data.get("pressure_level", "neutral")
+        emotional_intensity = sentiment_data.get("emotional_intensity", "minimal")
         
-        # Improved polarity handling
-        if polarity > 0.8 and not (is_basic_fact or is_health_fact):  # Only penalize extreme positivity in non-factual contexts
-            polarity_penalty = -5
-        elif polarity > 0.3:  # Moderately positive is good for health facts
-            polarity_penalty = 3 if (is_basic_fact or is_health_fact) else 2
-        elif polarity < -0.5:  # Very negative
-            polarity_penalty = -3
-        else:
-            polarity_penalty = 0  # Neutral is fine
-            
-        scores["sentiment_factor"] = subjectivity_penalty + polarity_penalty
-    
-    # 6. Smart Gemini API adjustment - context aware
-    gemini_score = gemini_result.get("credibility_score", 60)
-    if isinstance(gemini_score, (int, float)):
-        # Check if this is a fallback response (when Gemini API is unavailable)
-        is_fallback = gemini_score == 60 and "unavailable" in gemini_result.get("fact_check_summary", "").lower()
+        # Start with base trustworthiness
+        sentiment_score = base_trustworthiness
         
-        if is_fallback:
-            # Don't penalize when Gemini is unavailable - rely on local algorithm
-            gemini_adjustment = 0
-        elif is_basic_fact and is_health_fact and gemini_score < 80:
-            # Don't let Gemini pull down obvious health facts too much
-            gemini_adjustment = max(-5, (gemini_score - 60) * 0.3)
-        elif is_scientific and gemini_score >= 70:
-            # Give more weight to Gemini for scientific claims when it's positive
-            gemini_adjustment = (gemini_score - 60) * 0.8
-        else:
-            # Standard Gemini weighting
-            gemini_adjustment = (gemini_score - 60) * 0.5
+        # Apply additional penalties for suspicious patterns
+        if manipulation_detected:
+            manipulation_tactics = sentiment_data.get("manipulation_tactics", [])
+            manipulation_penalty = len(manipulation_tactics) * 5  # 5 points per tactic
+            sentiment_score -= manipulation_penalty
         
-        scores["gemini_adjustment"] = gemini_adjustment
+        # Pressure level adjustments
+        pressure_adjustments = {
+            "very_high": -15,
+            "high": -10,
+            "moderate": -5,
+            "low": 0,
+            "neutral": 0
+        }
+        sentiment_score += pressure_adjustments.get(pressure_level, 0)
+        
+        # Emotional intensity adjustments (very high intensity in ads is suspicious)
+        intensity_adjustments = {
+            "very_high": -10,
+            "high": -5,
+            "moderate": 0,
+            "low": 5,
+            "minimal": 0
+        }
+        sentiment_score += intensity_adjustments.get(emotional_intensity, 0)
+        
+        # Ensure score stays within bounds
+        sentiment_score = max(0, min(100, sentiment_score))
     
-    # 7. Statement type bonus for context
-    if is_basic_fact and is_health_fact and word_count <= 10:
-        scores["statement_type_bonus"] = 5  # Bonus for simple health facts
-    elif is_scientific:
-        scores["statement_type_bonus"] = 3  # Bonus for scientific language
+    # Dynamic weighting based on Gemini's confidence
+    # When Gemini detects serious issues (very low scores), reduce sentiment influence
+    if gemini_score <= 20:  # Extremely low Gemini score = trust Gemini more
+        gemini_weight = 0.95
+        sentiment_weight = 0.05
+    elif gemini_score <= 40:  # Low Gemini score = still trust Gemini more
+        gemini_weight = 0.93
+        sentiment_weight = 0.07
+    else:  # Normal scores = standard weighting
+        gemini_weight = 0.90
+        sentiment_weight = 0.10
     
-    # 8. Improved length analysis
-    if word_count < 3:
-        scores["language_analysis"] -= 8  # Very short might be incomplete
-    elif word_count <= 10 and (is_basic_fact or is_health_fact):
-        scores["language_analysis"] += 2  # Short factual statements are good
-    elif word_count > 300:
-        scores["language_analysis"] -= 5   # Very long might be misleading
-    
-    # Calculate final score
-    final_score = (scores["base_score"] + 
-                  scores["language_analysis"] + 
-                  scores["sentiment_factor"] + 
-                  scores["red_flag_penalties"] + 
-                  scores["gemini_adjustment"] + 
-                  scores["factual_indicators"] +
-                  scores["common_knowledge_bonus"] +
-                  scores["statement_type_bonus"])
+    final_score = (gemini_score * gemini_weight) + (sentiment_score * sentiment_weight)
     
     # Ensure score is between 0 and 100
     final_score = max(0, min(100, final_score))
@@ -448,14 +818,18 @@ def calculate_advanced_credibility_score(text: str, gemini_result: dict, sentime
         "credibility_level": credibility_level,
         "reliability": reliability,
         "score_breakdown": {
-            "base_score": scores["base_score"],
-            "language_analysis": round(scores["language_analysis"], 1),
-            "sentiment_factor": round(scores["sentiment_factor"], 1),
-            "red_flag_penalties": round(scores["red_flag_penalties"], 1),
-            "gemini_adjustment": round(scores["gemini_adjustment"], 1),
-            "factual_indicators": round(scores["factual_indicators"], 1),
-            "common_knowledge_bonus": round(scores["common_knowledge_bonus"], 1),
-            "statement_type_bonus": round(scores["statement_type_bonus"], 1)
+            "gemini_score": round(gemini_score, 1),
+            "gemini_weight": f"{gemini_weight*100:.0f}%",
+            "sentiment_score": round(sentiment_score, 1),
+            "sentiment_weight": f"{sentiment_weight*100:.0f}%",
+            "reasoning": gemini_result.get("reasoning", "No reasoning provided"),
+            "sentiment_details": {
+                "trustworthiness": sentiment_data.get("trustworthiness_score", 50) if sentiment_data else 50,
+                "manipulation_detected": sentiment_data.get("manipulation_detected", False) if sentiment_data else False,
+                "pressure_level": sentiment_data.get("pressure_level", "neutral") if sentiment_data else "neutral",
+                "emotional_intensity": sentiment_data.get("emotional_intensity", "minimal") if sentiment_data else "minimal",
+                "objectivity": sentiment_data.get("objectivity", "unknown") if sentiment_data else "unknown"
+            }
         }
     }
 
@@ -473,9 +847,9 @@ async def verify_text(request: TextRequest):
         # Perform sentiment analysis
         sentiment_result = analyze_sentiment(request.text)
         
-        # Calculate advanced credibility score
-        credibility_analysis = calculate_advanced_credibility_score(
-            request.text, gemini_result, sentiment_result
+        # Calculate credibility score
+        credibility_analysis = calculate_credibility_score(
+            gemini_result, sentiment_result
         )
         
         # Enhanced sentiment analysis with credibility factors
@@ -490,8 +864,8 @@ async def verify_text(request: TextRequest):
             verification_result=gemini_result.get("verification_status", "unknown"),
             credibility_score=credibility_analysis["final_score"] / 100.0,
             sentiment_analysis=enhanced_sentiment,
-            fact_check_details=gemini_result.get("fact_check_summary", "No analysis available"),
-            recommendations=gemini_result.get("recommendations", [])
+            fact_check_details=gemini_result.get("reasoning", "No analysis available"),
+            recommendations=gemini_result.get("main_issues", [])
         )
         
         return result
@@ -514,9 +888,9 @@ async def verify_file(file: UploadFile = File(...)):
         # Perform sentiment analysis
         sentiment_result = analyze_sentiment(text)
         
-        # Calculate advanced credibility score
-        credibility_analysis = calculate_advanced_credibility_score(
-            text, gemini_result, sentiment_result
+        # Calculate credibility score
+        credibility_analysis = calculate_credibility_score(
+            gemini_result, sentiment_result
         )
         
         # Enhanced sentiment analysis with credibility factors
@@ -531,8 +905,8 @@ async def verify_file(file: UploadFile = File(...)):
             verification_result=gemini_result.get("verification_status", "unknown"),
             credibility_score=credibility_analysis["final_score"] / 100.0,
             sentiment_analysis=enhanced_sentiment,
-            fact_check_details=gemini_result.get("fact_check_summary", "No analysis available"),
-            recommendations=gemini_result.get("recommendations", [])
+            fact_check_details=gemini_result.get("reasoning", "No analysis available"),
+            recommendations=gemini_result.get("main_issues", [])
         )
         
         return result

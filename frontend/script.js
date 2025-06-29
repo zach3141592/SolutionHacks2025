@@ -203,6 +203,11 @@ async function handleFileSubmission(event) {
 function displayResults(data) {
     hideLoading();
     
+    // Debug logging to see what we're receiving
+    console.log('Received data:', data);
+    console.log('Credibility score:', data.credibility_score);
+    console.log('Sentiment analysis:', data.sentiment_analysis);
+    
     // Original Text
     document.getElementById('original-text').textContent = data.original_text;
     
@@ -284,12 +289,19 @@ function displayCredibilityScore(score, sentimentData) {
         if (sentimentData.score_breakdown) {
             const breakdown = sentimentData.score_breakdown;
             description += `\n\nScore Breakdown:`;
-            description += `\n• Base Score: ${breakdown.base_score}`;
-            description += `\n• Language Analysis: ${breakdown.language_analysis > 0 ? '+' : ''}${breakdown.language_analysis}`;
-            description += `\n• Sentiment Factor: ${breakdown.sentiment_factor > 0 ? '+' : ''}${breakdown.sentiment_factor}`;
-            description += `\n• Red Flag Penalties: ${breakdown.red_flag_penalties}`;
-            description += `\n• AI Analysis: ${breakdown.gemini_adjustment > 0 ? '+' : ''}${breakdown.gemini_adjustment}`;
-            description += `\n• Factual Indicators: ${breakdown.factual_indicators > 0 ? '+' : ''}${breakdown.factual_indicators}`;
+            description += `\n• Gemini AI Score: ${breakdown.gemini_score}% (Weight: ${breakdown.gemini_weight})`;
+            description += `\n• Sentiment Score: ${breakdown.sentiment_score.toFixed(1)}% (Weight: ${breakdown.sentiment_weight})`;
+            
+            // Add sentiment details if available
+            if (breakdown.sentiment_details) {
+                const details = breakdown.sentiment_details;
+                description += `\n\nSentiment Analysis Details:`;
+                description += `\n• Trustworthiness: ${details.trustworthiness}%`;
+                description += `\n• Manipulation Detected: ${details.manipulation_detected ? 'Yes' : 'No'}`;
+                description += `\n• Pressure Level: ${details.pressure_level}`;
+                description += `\n• Emotional Intensity: ${details.emotional_intensity}`;
+                description += `\n• Objectivity: ${details.objectivity}`;
+            }
         }
     } else {
         // Fallback to original descriptions
