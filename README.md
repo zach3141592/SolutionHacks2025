@@ -1,8 +1,8 @@
-# Veridata - Advertisement Verification Service
+# Veridata 
 
 Veridata is an AI-powered web application that verifies advertisement claims using Google's Gemini API and performs sentiment analysis to help users identify potentially misleading or false advertising statements.
 
-## 🚀 Features
+## Features
 
 - **AI-Powered Fact Checking**: Uses Google Gemini API to analyze and verify advertisement claims
 - **Sentiment Analysis**: Provides detailed sentiment analysis including polarity, subjectivity, and objectivity
@@ -13,7 +13,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 - **Modern UI**: Beautiful, responsive interface with smooth animations
 - **Real-time Processing**: Fast verification with loading indicators and error handling
 
-## 🛠️ Technology Stack
+## Tech Stack
 
 ### Backend
 
@@ -31,7 +31,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 - **Font Awesome**: Beautiful icons and UI elements
 - **Google Fonts**: Professional typography
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 
@@ -91,7 +91,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
    └── README.md
    ```
 
-## 🚀 Running the Application
+## Running the Application
 
 ### Start the Backend Server
 
@@ -125,7 +125,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 
    Then visit `http://localhost:3000`
 
-## 📖 Usage
+## Usage
 
 ### Text Verification
 
@@ -147,10 +147,10 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 
 **Verification Status:**
 
-- ✅ **Verified**: Claims appear to be factually accurate
-- ⚠️ **Partially Verified**: Some claims may need additional verification
-- ❌ **Unverified**: Claims lack sufficient supporting evidence
-- 🚫 **Misleading**: Claims appear to be false or misleading
+-  **Verified**: Claims appear to be factually accurate
+-  **Partially Verified**: Some claims may need additional verification
+-  **Unverified**: Claims lack sufficient supporting evidence
+-  **Misleading**: Claims appear to be false or misleading
 
 **Credibility Score:**
 
@@ -166,7 +166,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 - **Objectivity**: Factual vs. opinion-based content
 - **Confidence**: How certain the sentiment analysis is
 
-## 🔧 API Endpoints
+## API Endpoints
 
 ### GET /
 
@@ -188,7 +188,7 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 
 - Returns API health status
 
-## 🎨 Customization
+##  Customization
 
 ### Modifying the Frontend
 
@@ -202,15 +202,15 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 - Adjust the Gemini API prompt to change analysis focus
 - Add new verification models or data sources
 
-## 🔐 Security Notes
+##  Security Notes
 
-- ✅ **API Key Security**: The Gemini API key is stored in a `.env` file that is excluded from version control
-- ⚠️ **Important**: Never commit your `.env` file to version control
-- 🔧 **Production Setup**: For production deployment, use proper environment variable configuration
-- 🛡️ **Additional Security**: Consider adding rate limiting and user authentication for production use
-- 🔍 **Input Validation**: All user inputs are validated and sanitized
+-  **API Key Security**: The Gemini API key is stored in a `.env` file that is excluded from version control
+-  **Important**: Never commit your `.env` file to version control
+-  **Production Setup**: For production deployment, use proper environment variable configuration
+-  **Additional Security**: Consider adding rate limiting and user authentication for production use
+-  **Input Validation**: All user inputs are validated and sanitized
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -218,11 +218,11 @@ Veridata is an AI-powered web application that verifies advertisement claims usi
 4. Test thoroughly
 5. Submit a pull request
 
-## 📝 License
+## License
 
 This project is open source and available under the MIT License.
 
-## 🆘 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -256,7 +256,7 @@ This project is open source and available under the MIT License.
 - Review browser console for JavaScript errors
 - Check backend logs for Python errors
 
-## 🌟 Features in Development
+## Features in Development
 
 - Support for more file formats (PDF, Word documents)
 - Batch processing for multiple advertisements
@@ -266,5 +266,3 @@ This project is open source and available under the MIT License.
 - Multi-language support
 
 ---
-
-**Made with ❤️ using FastAPI, Gemini AI, and modern web technologies**
